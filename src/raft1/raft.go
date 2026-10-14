@@ -117,7 +117,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
-	CandidateID  int
+	ID  int
 	Term         int
 	LastLogTerm  int
 	LastLogIndex int
@@ -128,7 +128,7 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	// Your data here (3A).
 	IsVoted   bool
-	ReplyTerm int
+	Term int
 }
 
 // example RequestVote RPC handler.
@@ -139,7 +139,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term < rf.Term {
 		reply.IsVoted = false
-		reply.ReplyTerm = rf.Term
+		reply.Term = rf.Term
 		return
 	}
 
@@ -152,19 +152,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	lastIndex := len(rf.Log) - 1
 	lastTerm := rf.Log[len(rf.Log)-1]
 
-	isVoteCandidateValid := rf.VotedFor == -1 || rf.VotedFor == args.CandidateID
+	isVoteCandidateValid := rf.VotedFor == -1 || rf.VotedFor == args.ID
 	logCandidateIsNewer := (args.LastLogTerm == lastTerm.Term && args.LastLogIndex >= lastIndex) ||
 		args.LastLogTerm > lastTerm.Term
 
 	if isVoteCandidateValid && logCandidateIsNewer {
-		rf.VotedFor = args.CandidateID
+		rf.VotedFor = args.ID
 		rf.LastHeard = time.Now()
 		reply.IsVoted = true
 	} else {
 		reply.IsVoted = false
 	}
 
-	reply.ReplyTerm = rf.Term
+	reply.Term = rf.Term
 }
 
 // example code to send a RequestVote RPC to a server.
@@ -251,7 +251,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (3A, 3B, 3C).
 	rf.Role = RoleFollower
-	rf.Log = []LogEntry{LogEntry{
+	rf.Log = []LogEntry{{
 		Command: nil,
 		Term:    0,
 	}}
@@ -278,7 +278,7 @@ func (rf *Raft) startElection() {
 
 	args := new(RequestVoteArgs)
 
-	args.CandidateID = rf.me
+	args.ID = rf.me
 	args.Term = rf.Term
 	args.LastLogIndex = len(rf.Log) - 1
 	args.LastLogTerm = rf.Log[len(rf.Log)-1].Term
@@ -290,7 +290,7 @@ func (rf *Raft) startElection() {
 	for idx := range rf.peers {
 		if idx == rf.me {
 			continue
-		
+
 		}
 		go func(peer int) {
 			reply := new(RequestVoteReply)
@@ -301,8 +301,8 @@ func (rf *Raft) startElection() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
-			if reply.ReplyTerm > rf.Term {
-				rf.Term = reply.ReplyTerm
+			if reply.Term > rf.Term {
+				rf.Term = reply.Term
 				rf.VotedFor = -1
 				rf.Role = RoleFollower
 				return
@@ -320,4 +320,40 @@ func (rf *Raft) startElection() {
 			}
 		}(idx)
 	}
+}
+
+type AppendEntriesArgs struct {
+	ID int
+	Term int
+}
+
+type AppendEntriesReply struct{
+	Term int
+	Success bool
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply){
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if args.Term < rf.Term{
+		reply.Term = rf.Term
+		reply.Success = false
+		return
+	}
+
+	if args.Term > rf.Term{
+		rf.Term = args.Term
+		rf.VotedFor = -1
+	}
+
+	rf.Role = RoleFollower
+	rf.LastHeard = time.Now()
+
+	reply.Term = rf.Term
+	reply.Success = true
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
 }
