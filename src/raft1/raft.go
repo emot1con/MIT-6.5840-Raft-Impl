@@ -52,10 +52,15 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	var term int
 	var isleader bool
 	// Your code here (3A).
+
+	term = rf.Term
+	isleader = rf.Role == RoleLeader
 	return term, isleader
 }
 
@@ -225,7 +230,14 @@ func (rf *Raft) ticker() {
 
 		// Your code here (3A)
 		// Check if a leader election should be started.
+		rf.mu.Lock()
+		timeout := time.Duration(500+rand.Int63()%500) * time.Millisecond
+		startElection := rf.Role != RoleLeader && time.Since(rf.LastHeard) > time.Duration(timeout)
+		rf.mu.Unlock()
 
+		if startElection {
+			rf.startElection()
+		}
 		// pause for a random amount of time between 50 and 350
 		// milliseconds.
 		ms := 50 + (rand.Int63() % 300)
