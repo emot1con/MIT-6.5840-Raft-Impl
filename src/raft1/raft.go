@@ -9,6 +9,7 @@ package raft
 
 import (
 	//	"bytes"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -122,7 +123,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // field names must start with capital letters!
 type RequestVoteArgs struct {
 	// Your data here (3A, 3B).
-	ID  int
+	ID           int
 	Term         int
 	LastLogTerm  int
 	LastLogIndex int
@@ -132,8 +133,8 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 type RequestVoteReply struct {
 	// Your data here (3A).
-	IsVoted   bool
-	Term int
+	IsVoted bool
+	Term    int
 }
 
 // example RequestVote RPC handler.
@@ -168,7 +169,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.IsVoted = false
 	}
-
+	log.Printf("[%d] RV dari %d (term %d) -> granted=%v, termku=%d",
+		rf.me, args.ID, args.Term, reply.IsVoted, rf.Term)
 	reply.Term = rf.Term
 }
 
@@ -274,6 +276,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+
 	// start ticker goroutine to start elections
 	go rf.ticker()
 
@@ -298,6 +301,7 @@ func (rf *Raft) startElection() {
 	votes := 1
 
 	rf.mu.Unlock()
+	log.Printf("[%d] mulai election, term=%d", rf.me, currTerm)
 
 	for idx := range rf.peers {
 		if idx == rf.me {
@@ -307,6 +311,8 @@ func (rf *Raft) startElection() {
 		go func(peer int) {
 			reply := new(RequestVoteReply)
 			if ok := rf.sendRequestVote(peer, args, reply); !ok {
+				log.Printf("[%d] RPC ke %d GAGAL", rf.me, peer)
+
 				return
 			}
 
@@ -328,6 +334,9 @@ func (rf *Raft) startElection() {
 				votes++
 				if votes > len(rf.peers)/2 {
 					rf.Role = RoleLeader
+					log.Printf("[%d] JADI LEADER, term=%d", rf.me, rf.Term)
+
+					go rf.startHeartBeatLoop(rf.Term)
 				}
 			}
 		}(idx)
@@ -335,25 +344,25 @@ func (rf *Raft) startElection() {
 }
 
 type AppendEntriesArgs struct {
-	ID int
+	ID   int
 	Term int
 }
 
-type AppendEntriesReply struct{
-	Term int
+type AppendEntriesReply struct {
+	Term    int
 	Success bool
 }
 
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply){
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if args.Term < rf.Term{
+	if args.Term < rf.Term {
 		reply.Term = rf.Term
 		reply.Success = false
 		return
 	}
 
-	if args.Term > rf.Term{
+	if args.Term > rf.Term {
 		rf.Term = args.Term
 		rf.VotedFor = -1
 	}
@@ -369,3 +378,44 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
+
+func (rf *Raft) startHeartBeatLoop(leaderTerm int) {
+	for {
+		rf.mu.Lock()
+
+		if rf.Role != RoleLeader || rf.Term != leaderTerm {
+			rf.mu.Unlock()
+			return
+		}
+
+		args := new(AppendEntriesArgs)
+		args.ID = rf.me
+		args.Term = rf.Term
+
+		rf.mu.Unlock()
+
+		for idx := range rf.peers {
+			if idx == rf.me {
+				continue
+			}
+
+			go func(peerIdx int) {
+				reply := new(AppendEntriesReply)
+				if ok := rf.sendAppendEntries(peerIdx, args, reply); !ok {
+					return
+				}
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+
+				if reply.Term > rf.Term {
+					rf.Role = RoleFollower
+					rf.Term = reply.Term
+					rf.VotedFor = -1
+				}
+			}(idx)
+		}
+
+		time.Sleep(120 * time.Millisecond)
+	}
+}
+
