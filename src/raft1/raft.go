@@ -169,7 +169,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.IsVoted = false
 	}
-	log.Printf("[%d] RV dari %d (term %d) -> granted=%v, termkus=%d",
+	log.Printf("[%d] RV dari %d (term %d) -> granted=%v, termku=%d",
 		rf.me, args.ID, args.Term, reply.IsVoted, rf.Term)
 	reply.Term = rf.Term
 }
